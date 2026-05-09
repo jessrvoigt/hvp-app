@@ -84,13 +84,18 @@ export default async function handler(req, res) {
     })
   }
 
-  const { base64, mediaType, examples } = req.body
-  if (!base64 || !mediaType) return res.status(400).json({ error: 'Missing image data' })
+  const { images, examples } = req.body
+  if (!images?.length) return res.status(400).json({ error: 'Missing image data' })
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const startTime = Date.now()
 
   try {
+    const imageBlocks = images.map(img => ({
+      type: 'image',
+      source: { type: 'base64', media_type: img.mediaType, data: img.base64 },
+    }))
+
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
@@ -98,7 +103,7 @@ export default async function handler(req, res) {
       messages: [{
         role: 'user',
         content: [
-          { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+          ...imageBlocks,
           { type: 'text', text: buildPrompt(examples) },
         ],
       }],

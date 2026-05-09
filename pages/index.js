@@ -3,6 +3,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 
 const CLAUDE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
 const MAX_BYTES = 20 * 1024 * 1024
+const MAX_IMAGES = 10
 
 const ALL_TAGS = [
   'spring-2025', 'summer-2025', 'fall-2025', 'winter-2025',
@@ -11,7 +12,6 @@ const ALL_TAGS = [
   'navy', 'coastal-blue', 'natural', 'pastel',
 ]
 
-// Resize + compress image in the browser so it fits within Vercel's 4.5 MB API limit
 function compressImage(dataUrl) {
   return new Promise((resolve) => {
     const img = new Image()
@@ -33,24 +33,24 @@ function compressImage(dataUrl) {
 }
 
 export default function Home() {
-  const [fileData, setFileData]       = useState(null)
-  const [preview, setPreview]         = useState(null)
-  const [formatWarn, setFormatWarn]   = useState(null)
-  const [dragging, setDragging]       = useState(false)
-  const [generating, setGenerating]   = useState(false)
-  const [genMeta, setGenMeta]         = useState(null)
-  const [error, setError]             = useState(null)
-  const [form, setForm]               = useState(null)
-  const [originalListing, setOriginalListing] = useState(null) // Claude's raw output before edits
-  const [tags, setTags]               = useState([])
-  const [tagInput, setTagInput]       = useState('')
+  // Multiple images stored as array of { base64, mediaType, name, size, preview }
+  const [images, setImages]             = useState([])
+  const [formatWarn, setFormatWarn]     = useState(null)
+  const [dragging, setDragging]         = useState(false)
+  const [generating, setGenerating]     = useState(false)
+  const [genMeta, setGenMeta]           = useState(null)
+  const [error, setError]               = useState(null)
+  const [form, setForm]                 = useState(null)
+  const [originalListing, setOriginalListing] = useState(null)
+  const [tags, setTags]                 = useState([])
+  const [tagInput, setTagInput]         = useState('')
   const [shopifyCollections, setShopifyCollections] = useState([])
-  const [pushing, setPushing]         = useState(false)
+  const [pushing, setPushing]           = useState(false)
   const [shopifyResult, setShopifyResult] = useState(null)
-  const [history, setHistory]         = useState([])
-  const [toast, setToast]             = useState(null)
+  const [history, setHistory]           = useState([])
+  const [toast, setToast]               = useState(null)
 
-  const toastRef    = useRef(null)
+  const toastRef     = useRef(null)
   const fileInputRef = useRef(null)
 
   useEffect(() => {
@@ -67,52 +67,68 @@ export default function Home() {
     toastRef.current = setTimeout(() => setToast(null), 2600)
   }, [])
 
-  // ── File handling ────────────────────────────────────────────────────────────
-  const processFile = useCallback((file) => {
+  // ── File handling ─────────────────────────────────────────────────────────────
+  const processFiles = useCallback((fileList) => {
     setError(null)
     setFormatWarn(null)
     setShopifyResult(null)
 
-    if (file.size > MAX_BYTES) {
-      setError(`File is ${(file.size / 1024 / 1024).toFixed(1)} MB — max is 20 MB.`)
-      return
-    }
+    const incoming = Array.from(fileList)
+    const remaining = MAX_IMAGES - images.length
+    if (remaining <= 0) { showToast(`Max ${MAX_IMAGES} images per listing`); return }
+    const toProcess = incoming.slice(0, remaining)
 
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const dataUrl = e.target.result
-      setPreview(dataUrl)
+    toProcess.forEach(file => {
+      if (file.size > MAX_BYTES) { setError(`${file.name} is too large (max 20 MB)`); return }
 
-      if (!CLAUDE_TYPES.has(file.type)) {
-        setFileData({ base64: dataUrl.split(',')[1], mediaType: dataUrl.split(';')[0].split(':')[1], name: file.name, size: file.size })
-        setFormatWarn(`${file.type || file.name.split('.').pop()} can't be analyzed by Claude. Convert to JPG, PNG, WebP, or GIF.`)
-        return
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        const dataUrl = e.target.result
+
+        if (!CLAUDE_TYPES.has(file.type)) {
+          setFormatWarn(`${file.name}: convert to JPG, PNG, WebP, or GIF for Claude to analyze.`)
+          return
+        }
+
+        compressImage(dataUrl).then(compressed => {
+          setImages(prev => [
+            ...prev,
+            {
+              base64:    compressed.split(',')[1],
+              mediaType: 'image/jpeg',
+              name:      file.name,
+              size:      file.size,
+              preview:   dataUrl, // show original for preview quality
+            },
+          ])
+        })
       }
+      reader.readAsDataURL(file)
+    })
+  }, [images, showToast])
 
-      compressImage(dataUrl).then((compressed) => {
-        setFileData({ base64: compressed.split(',')[1], mediaType: 'image/jpeg', name: file.name, size: file.size })
-      })
-    }
-    reader.readAsDataURL(file)
+  const removeImage = useCallback((index) => {
+    setImages(prev => prev.filter((_, i) => i !== index))
   }, [])
 
-  const clearImage = useCallback(() => {
-    setFileData(null); setPreview(null); setFormatWarn(null)
-    setError(null); setShopifyResult(null)
+  const clearImages = useCallback(() => {
+    setImages([])
+    setFormatWarn(null)
+    setError(null)
+    setShopifyResult(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
 
-  // ── Tags ─────────────────────────────────────────────────────────────────────
+  // ── Tags ───────────────────────────────────────────────────────────────────────
   const addTag    = useCallback((tag) => { tag = tag.trim().toLowerCase().replace(/\s+/g, '-'); if (!tag) return; setTags(p => p.includes(tag) ? p : [...p, tag]); setTagInput('') }, [])
   const removeTag = useCallback((tag) => setTags(p => p.filter(t => t !== tag)), [])
   const toggleTag = useCallback((tag) => setTags(p => p.includes(tag) ? p.filter(t => t !== tag) : [...p, tag]), [])
 
-  // ── Generate ──────────────────────────────────────────────────────────────────
+  // ── Generate ───────────────────────────────────────────────────────────────────
   const generate = useCallback(async () => {
-    if (!fileData) return
+    if (!images.length) return
     setGenerating(true); setError(null); setForm(null); setOriginalListing(null); setShopifyResult(null)
 
-    // Pass the last 3 saved examples so Claude can learn from edits
     const examples = history
       .filter(h => h.original && h.edited)
       .slice(0, 20)
@@ -122,7 +138,10 @@ export default function Home() {
       const res  = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ base64: fileData.base64, mediaType: fileData.mediaType, examples }),
+        body: JSON.stringify({
+          images: images.map(img => ({ base64: img.base64, mediaType: img.mediaType })),
+          examples,
+        }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
@@ -136,9 +155,9 @@ export default function Home() {
     } finally {
       setGenerating(false)
     }
-  }, [fileData, history])
+  }, [images, history])
 
-  // ── Push to Shopify ───────────────────────────────────────────────────────────
+  // ── Shopify ────────────────────────────────────────────────────────────────────
   const pushToShopify = useCallback(async () => {
     if (!form) return
     setPushing(true); setError(null)
@@ -146,7 +165,8 @@ export default function Home() {
       const res  = await fetch('/api/shopify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, tags, imageBase64: fileData?.base64 || null, imageMediaType: fileData?.mediaType || null }),
+        // Send first image as primary product image
+        body: JSON.stringify({ ...form, tags, imageBase64: images[0]?.base64 || null, imageMediaType: images[0]?.mediaType || null }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
@@ -154,27 +174,19 @@ export default function Home() {
       showToast('Product created in Shopify!')
       const entry = { id: Date.now(), savedAt: new Date().toLocaleString(), listing: { ...form, tags }, original: originalListing || null, edited: { ...form, tags } }
       const next  = [entry, ...history].slice(0, 50)
-      setHistory(next)
-      localStorage.setItem('hvp_listings', JSON.stringify(next))
+      setHistory(next); localStorage.setItem('hvp_listings', JSON.stringify(next))
     } catch (err) {
       setError(err.message || 'Shopify push failed')
     } finally {
       setPushing(false)
     }
-  }, [form, tags, fileData, history, showToast])
+  }, [form, tags, images, originalListing, history, showToast])
 
-  // ── History ───────────────────────────────────────────────────────────────────
+  // ── History ────────────────────────────────────────────────────────────────────
   const saveToHistory = useCallback(() => {
     if (!form?.title) { showToast('Add a title before saving'); return }
-    const entry = {
-      id: Date.now(),
-      savedAt: new Date().toLocaleString(),
-      listing: { ...form, tags },
-      // Store both versions so future generations can learn from your edits
-      original: originalListing || null,
-      edited: { ...form, tags },
-    }
-    const next = [entry, ...history].slice(0, 50)
+    const entry = { id: Date.now(), savedAt: new Date().toLocaleString(), listing: { ...form, tags }, original: originalListing || null, edited: { ...form, tags } }
+    const next  = [entry, ...history].slice(0, 50)
     setHistory(next); localStorage.setItem('hvp_listings', JSON.stringify(next)); showToast('Saved!')
   }, [form, tags, originalListing, history, showToast])
 
@@ -202,7 +214,7 @@ export default function Home() {
     ? shopifyCollections
     : ['Spring 2025 Collection', 'Summer 2025 Collection', 'Fall 2025 Collection', 'Winter 2025 Collection', 'Ponchos', 'Basics', 'Totes', 'Seasonal', 'New Arrivals', 'Best Sellers'].map(t => ({ id: t, title: t }))
 
-  const canGenerate = !!fileData && !formatWarn && !generating
+  const canGenerate = images.length > 0 && !generating
   const canPush     = !!form && !pushing && !!form.title
 
   return (
@@ -223,39 +235,65 @@ export default function Home() {
           {/* ══ LEFT ══ */}
           <div>
             <div className="card">
-              <div className="card-title">Product Image</div>
+              <div className="card-title">Product Images</div>
 
               <div
                 className={`drop-zone${dragging ? ' drag-over' : ''}`}
                 onClick={() => fileInputRef.current?.click()}
                 onDragOver={e => { e.preventDefault(); setDragging(true) }}
                 onDragLeave={() => setDragging(false)}
-                onDrop={e => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files[0]) processFile(e.dataTransfer.files[0]) }}
+                onDrop={e => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files.length) processFiles(e.dataTransfer.files) }}
                 role="button" tabIndex={0}
                 onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click() }}
               >
                 <span className="drop-icon">🌊</span>
                 <p><strong>Click to browse</strong> or drag &amp; drop</p>
                 <p className="fmt-note">
-                  JPG, PNG, WebP, GIF, HEIC, SVG, PSD, TIFF, BMP · Up to 20 MB<br />
-                  <em>Large images are automatically compressed before sending</em>
+                  Up to {MAX_IMAGES} photos per listing · JPG, PNG, WebP, GIF · Up to 20 MB each<br />
+                  <em>Multiple angles help Claude write more accurate listings</em>
                 </p>
               </div>
 
-              <input ref={fileInputRef} type="file" accept="image/*,.psd,.tiff,.tif,.heic,.heif" style={{ display: 'none' }} onChange={e => { if (e.target.files[0]) processFile(e.target.files[0]) }} />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,.psd,.tiff,.tif,.heic,.heif"
+                multiple
+                style={{ display: 'none' }}
+                onChange={e => { if (e.target.files.length) processFiles(e.target.files) }}
+              />
 
               {formatWarn && <div className="format-warn">⚠ {formatWarn}</div>}
 
-              {preview && (
-                <div className="preview-wrap">
-                  <img src={preview} alt="Product preview" className="preview-img" />
-                  <p className="file-info">{fileData?.name} · {fileData ? (fileData.size / 1024).toFixed(0) : ''}  KB</p>
-                  <button className="btn btn-danger" onClick={clearImage}>✕ Remove</button>
+              {/* Image grid */}
+              {images.length > 0 && (
+                <div className="image-grid">
+                  {images.map((img, i) => (
+                    <div key={i} className="image-thumb">
+                      <img src={img.preview} alt={img.name} />
+                      {i === 0 && <span className="primary-badge">Primary</span>}
+                      <button className="remove-thumb" onClick={() => removeImage(i)} aria-label="Remove">×</button>
+                    </div>
+                  ))}
+                  {images.length < MAX_IMAGES && (
+                    <div className="image-thumb add-more" onClick={() => fileInputRef.current?.click()}>
+                      <span>+ Add more</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {images.length > 0 && (
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <span style={{ fontSize: '.78rem', color: 'var(--muted)', alignSelf: 'center' }}>
+                    {images.length} photo{images.length > 1 ? 's' : ''} · drag to reorder coming soon
+                  </span>
+                  <button className="btn btn-danger" style={{ marginLeft: 'auto' }} onClick={clearImages}>✕ Clear all</button>
                 </div>
               )}
 
               <button className="btn btn-primary" onClick={generate} disabled={!canGenerate}>
-                {generating ? '⏳ Analyzing…' : '✦ Generate Listing'}
+                {generating ? '⏳ Analyzing…' : `✦ Generate Listing${images.length > 1 ? ` (${images.length} photos)` : ''}`}
               </button>
 
               {error && <div className="error-msg">{error}</div>}
@@ -264,7 +302,7 @@ export default function Home() {
             {generating && (
               <div className="spinner-wrap">
                 <div className="spinner-ring" />
-                <p>Claude is analyzing your image…</p>
+                <p>Claude is analyzing your {images.length > 1 ? `${images.length} photos` : 'image'}…</p>
               </div>
             )}
           </div>
