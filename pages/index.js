@@ -93,30 +93,33 @@ export default function Home() {
     }
 
     const reader = new FileReader()
-    reader.onload = async e => {
+    reader.onload = e => {
       const dataUrl = e.target.result
       setPreview(dataUrl)
 
-      // Compress before storing so API calls stay within Vercel's limits
-      const compressed = CLAUDE_TYPES.has(file.type)
-        ? await compressImage(dataUrl)
-        : dataUrl
-
-      setFileData({
-        base64:    compressed.split(',')[1],
-        mediaType: 'image/jpeg',
-        name:      file.name,
-        size:      file.size,
-      })
       if (!CLAUDE_TYPES.has(file.type)) {
+        // Non-Claude format: store as-is, warn user
+        setFileData({ base64: dataUrl.split(',')[1], mediaType: dataUrl.split(';')[0].split(':')[1], name: file.name, size: file.size })
         setFormatWarn(
           `${file.type || file.name.split('.').pop()} can't be analyzed by Claude. ` +
           `Please convert to JPG, PNG, WebP, or GIF to generate a listing.`
         )
+        return
       }
+
+      // Compress before storing so API calls stay within Vercel's limits
+      compressImage(dataUrl).then(compressed => {
+        setFileData({
+          base64:    compressed.split(',')[1],
+          mediaType: 'image/jpeg',
+          name:      file.name,
+          size:      file.size,
+        })
+      })
+
     }
     reader.readAsDataURL(file)
-  }, [])
+  }, [compressImage])
 
   const clearImage = useCallback(() => {
     setFileData(null)
