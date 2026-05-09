@@ -200,7 +200,7 @@ export default function Home() {
 
   const collectionOptions = shopifyCollections.length > 0
     ? shopifyCollections
-    : ['Spring 2025 Collection', 'Summer 2025 Collection', 'Fall 2025 Collection', 'Winter 2025 Collection', 'Ponchos', 'Basics', 'Totes', 'Seasonal', 'New Arrivals', 'Best Sellers'].map(t => ({ id: '', title: t }))
+    : ['Spring 2025 Collection', 'Summer 2025 Collection', 'Fall 2025 Collection', 'Winter 2025 Collection', 'Ponchos', 'Basics', 'Totes', 'Seasonal', 'New Arrivals', 'Best Sellers'].map(t => ({ id: t, title: t }))
 
   const canGenerate = !!fileData && !formatWarn && !generating
   const canPush     = !!form && !pushing && !!form.title
@@ -302,7 +302,7 @@ export default function Home() {
                 </div>
                 <div className="field-group">
                   <label>Collection</label>
-                  <select value={form.collectionId || form.collection} onChange={e => { const opt = e.target.options[e.target.selectedIndex]; setForm(p => ({ ...p, collection: opt.text, collectionId: opt.value })) }}>
+                  <select value={form.collection} onChange={e => { const opt = e.target.options[e.target.selectedIndex]; setForm(p => ({ ...p, collection: opt.text, collectionId: opt.value })) }}>
                     <option value="">— Select —</option>
                     {collectionOptions.map(c => <option key={c.id || c.title} value={c.id}>{c.title}</option>)}
                   </select>
