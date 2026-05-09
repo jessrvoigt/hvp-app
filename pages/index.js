@@ -60,6 +60,27 @@ export default function Home() {
     toastRef.current = setTimeout(() => setToast(null), 2600)
   }, [])
 
+  // ── Image compression (runs in browser before upload) ──────────────────────
+  const compressImage = useCallback((dataUrl) => {
+    return new Promise((resolve) => {
+      const img = new Image()
+      img.onload = () => {
+        const MAX_DIM = 1568 // Claude's optimal vision size
+        let { width, height } = img
+        if (width > MAX_DIM || height > MAX_DIM) {
+          if (width > height) { height = Math.round(height * MAX_DIM / width); width = MAX_DIM }
+          else { width = Math.round(width * MAX_DIM / height); height = MAX_DIM }
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height)
+        resolve(canvas.toDataURL('image/jpeg', 0.88))
+      }
+      img.src = dataUrl
+    })
+  }, [])
+
   // ── File handling ───────────────────────────────────────────────────────────
   const processFile = useCallback((file) => {
     setError(null)
@@ -72,12 +93,18 @@ export default function Home() {
     }
 
     const reader = new FileReader()
-    reader.onload = e => {
+    reader.onload = async e => {
       const dataUrl = e.target.result
       setPreview(dataUrl)
+
+      // Compress before storing so API calls stay within Vercel's limits
+      const compressed = CLAUDE_TYPES.has(file.type)
+        ? await compressImage(dataUrl)
+        : dataUrl
+
       setFileData({
-        base64:    dataUrl.split(',')[1],
-        mediaType: dataUrl.split(';')[0].split(':')[1],
+        base64:    compressed.split(',')[1],
+        mediaType: 'image/jpeg',
         name:      file.name,
         size:      file.size,
       })
