@@ -115,7 +115,7 @@ export default function Home() {
     // Pass the last 3 saved examples so Claude can learn from edits
     const examples = history
       .filter(h => h.original && h.edited)
-      .slice(0, 3)
+      .slice(0, 20)
       .map(h => ({ original: h.original, edited: h.edited }))
 
     try {
