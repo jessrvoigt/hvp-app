@@ -1,6 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
 
-// Allow up to 25 MB request body (covers Shopify's 20 MB image limit + JSON overhead)
 export const config = {
   api: { bodyParser: { sizeLimit: '25mb' } },
 }
@@ -27,7 +26,7 @@ VALID TAGS (choose 3–5): spring-2025, summer-2025, fall-2025, winter-2025, pon
 
 Return ONLY valid JSON — no markdown, no code blocks, no backticks, no extra text.`
 
-const USER_PROMPT = `Analyze this product image. Return ONLY this JSON (pure JSON, nothing else):
+const BASE_PROMPT = `Analyze this product image. Return ONLY this JSON (pure JSON, nothing else):
 
 {
   "title": "Product Title (3-5 words, no brand name)",
@@ -41,6 +40,41 @@ const USER_PROMPT = `Analyze this product image. Return ONLY this JSON (pure JSO
   "special_features": "any visible special details"
 }`
 
+function buildPrompt(examples) {
+  if (!examples || examples.length === 0) return BASE_PROMPT
+
+  const exampleText = examples.map((ex, i) => {
+    const orig = ex.original
+    const edit = ex.edited
+    const changes = []
+
+    if (orig.title !== edit.title)
+      changes.push(`  Title: "${orig.title}" → "${edit.title}"`)
+    if (orig.description !== edit.description)
+      changes.push(`  Description: rewritten (kept tone: ${edit.description.slice(0, 80)}…)`)
+    if (String(orig.suggested_price) !== String(edit.price) && edit.price)
+      changes.push(`  Price: $${orig.suggested_price} → $${edit.price}`)
+    if (JSON.stringify(orig.tags) !== JSON.stringify(edit.tags))
+      changes.push(`  Tags: ${orig.tags?.join(', ')} → ${edit.tags?.join(', ')}`)
+    if (orig.product_type !== edit.productType && edit.productType)
+      changes.push(`  Product type: ${orig.product_type} → ${edit.productType}`)
+
+    if (changes.length === 0) return null
+    return `EXAMPLE ${i + 1} — what the user changed:\n${changes.join('\n')}`
+  }).filter(Boolean).join('\n\n')
+
+  if (!exampleText) return BASE_PROMPT
+
+  return `${BASE_PROMPT}
+
+---
+LEARN FROM THESE EDITS — the owner has corrected previous listings. Match her style:
+
+${exampleText}
+
+Apply these patterns to this new product.`
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
@@ -50,7 +84,7 @@ export default async function handler(req, res) {
     })
   }
 
-  const { base64, mediaType } = req.body
+  const { base64, mediaType, examples } = req.body
   if (!base64 || !mediaType) return res.status(400).json({ error: 'Missing image data' })
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -65,7 +99,7 @@ export default async function handler(req, res) {
         role: 'user',
         content: [
           { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
-          { type: 'text', text: USER_PROMPT },
+          { type: 'text', text: buildPrompt(examples) },
         ],
       }],
     })

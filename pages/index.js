@@ -41,6 +41,7 @@ export default function Home() {
   const [genMeta, setGenMeta]         = useState(null)
   const [error, setError]             = useState(null)
   const [form, setForm]               = useState(null)
+  const [originalListing, setOriginalListing] = useState(null) // Claude's raw output before edits
   const [tags, setTags]               = useState([])
   const [tagInput, setTagInput]       = useState('')
   const [shopifyCollections, setShopifyCollections] = useState([])
@@ -109,17 +110,25 @@ export default function Home() {
   // ── Generate ──────────────────────────────────────────────────────────────────
   const generate = useCallback(async () => {
     if (!fileData) return
-    setGenerating(true); setError(null); setForm(null); setShopifyResult(null)
+    setGenerating(true); setError(null); setForm(null); setOriginalListing(null); setShopifyResult(null)
+
+    // Pass the last 3 saved examples so Claude can learn from edits
+    const examples = history
+      .filter(h => h.original && h.edited)
+      .slice(0, 3)
+      .map(h => ({ original: h.original, edited: h.edited }))
+
     try {
       const res  = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ base64: fileData.base64, mediaType: fileData.mediaType }),
+        body: JSON.stringify({ base64: fileData.base64, mediaType: fileData.mediaType, examples }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setGenMeta({ time: data.time, tokens: data.tokens, cost: data.cost })
       const l = data.listing
+      setOriginalListing(l)
       setForm({ title: l.title || '', description: l.description || '', price: l.suggested_price || '', collection: l.suggested_collection || '', collectionId: '', productType: l.product_type || '', ageGroup: l.age_group || '', materials: l.materials_notes || '', features: l.special_features || '' })
       setTags(Array.isArray(l.tags) ? l.tags : [])
     } catch (err) {
@@ -127,7 +136,7 @@ export default function Home() {
     } finally {
       setGenerating(false)
     }
-  }, [fileData])
+  }, [fileData, history])
 
   // ── Push to Shopify ───────────────────────────────────────────────────────────
   const pushToShopify = useCallback(async () => {
@@ -143,7 +152,7 @@ export default function Home() {
       if (!res.ok) throw new Error(data.error)
       setShopifyResult(data.productUrl)
       showToast('Product created in Shopify!')
-      const entry = { id: Date.now(), savedAt: new Date().toLocaleString(), listing: { ...form, tags } }
+      const entry = { id: Date.now(), savedAt: new Date().toLocaleString(), listing: { ...form, tags }, original: originalListing || null, edited: { ...form, tags } }
       const next  = [entry, ...history].slice(0, 50)
       setHistory(next)
       localStorage.setItem('hvp_listings', JSON.stringify(next))
@@ -157,10 +166,17 @@ export default function Home() {
   // ── History ───────────────────────────────────────────────────────────────────
   const saveToHistory = useCallback(() => {
     if (!form?.title) { showToast('Add a title before saving'); return }
-    const entry = { id: Date.now(), savedAt: new Date().toLocaleString(), listing: { ...form, tags } }
-    const next  = [entry, ...history].slice(0, 50)
+    const entry = {
+      id: Date.now(),
+      savedAt: new Date().toLocaleString(),
+      listing: { ...form, tags },
+      // Store both versions so future generations can learn from your edits
+      original: originalListing || null,
+      edited: { ...form, tags },
+    }
+    const next = [entry, ...history].slice(0, 50)
     setHistory(next); localStorage.setItem('hvp_listings', JSON.stringify(next)); showToast('Saved!')
-  }, [form, tags, history, showToast])
+  }, [form, tags, originalListing, history, showToast])
 
   const loadFromHistory = useCallback((entry) => {
     const l = entry.listing
